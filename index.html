@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verus Web Login</title>
+    <!-- QR code renderer (no build step needed) -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 480px;
+            margin: 60px auto;
+            text-align: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        #qr-container {
+            margin: 24px auto;
+            display: inline-block;
+            padding: 12px;
+            background: #fff;
+            border-radius: 12px;
+        }
+
+        #qr-container img,
+        #qr-container canvas {
+            display: block;
+            image-rendering: crisp-edges;
+        }
+
+        #status {
+            margin-top: 16px;
+            color: #555;
+        }
+
+        #loggedin {
+            display: none;
+        }
+
+        .error {
+            color: red;
+        }
+
+        #deeplink-btn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 1.1rem;
+            margin: 24px auto;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: background-color 0.3s;
+        }
+
+        #deeplink-btn:hover {
+            background-color: #45a049;
+        }
+
+        #deeplink-btn:active {
+            background-color: #3d8b40;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ── Login view ── -->
+    <div id="login-view">
+        <h2>Sign In</h2>
+        <button id="login-btn">Login with your Verus ID</button>
+        <div id="qr-container"></div>
+        <p id="status"></p>
+        <p>Don't have a wallet? <a href="https://verus.io/wallet" target="_blank">Get Verus Wallet</a></p>
+    </div>
+
+    <!-- ── Logged-in view ── -->
+    <div id="loggedin">
+        <h2>Logged In</h2>
+        <p><strong>Welcome:</strong> <span id="display-name"></span></p>
+        <button id="logout-btn">Log out</button>
+    </div>
+
+    <script type="module">
+        import { VERUS_SERVER_API, VERUS_SERVER_WS } from "./config.js";
+
+        // ── DOM references ────────────────────────────────────────────────────────
+        const loginView = document.getElementById("login-view");
+        const loggedinView = document.getElementById("loggedin");
+        const loginBtn = document.getElementById("login-btn");
+        const logoutBtn = document.getElementById("logout-btn");
+        const qrContainer = document.getElementById("qr-container");
+        const statusEl = document.getElementById("status");
+        const displayName = document.getElementById("display-name");
+
+        let socket = null; // keep a reference so we can close it if needed
+        let currentDeepLink = null;
+
+        // ── Mobile detection ──────────────────────────────────────────────────────
+        function isMobile() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        }
+
+        // ── On page load – check for existing session ─────────────────────────────
+        (function init() {
+            const name = localStorage.getItem("name");
+            if (name) {
+                showLoggedIn(name);
+            }
+        })();
+
+        // ── Login button ──────────────────────────────────────────────────────────
+        loginBtn.addEventListener("click", async () => {
+            loginBtn.disabled = true;
+            setStatus("Requesting login QR…");
+
+            try {
+                const response = await fetch(`${VERUS_SERVER_API}/login`, { method: "POST" });
+
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+
+                const json = await response.json();
+                const { deepLink, challengeID } = json.data;
+
+                currentDeepLink = deepLink;
+                renderQR(deepLink);
+                setStatus(isMobile() ? "Click the button to open your Verus Mobile app." : "Scan the QR code with your Verus Mobile app.");
+                awaitLogin(challengeID);
+
+            } catch (err) {
+                const message = err && err.message ? err.message : "Unknown error";
+                if (message.includes("Failed to fetch")) {
+                    setStatus("Error: Failed to fetch. Check API URL, CORS, and that the server is running on 127.0.0.1:8000.", true);
+                } else {
+                    setStatus(`Error: ${message}`, true);
+                }
+                loginBtn.disabled = false;
+            }
+        });
+
+        // ── Logout button ─────────────────────────────────────────────────────────
+        logoutBtn.addEventListener("click", () => {
+            localStorage.removeItem("token");
+            localStorage.removeItem("iaddress");
+            localStorage.removeItem("name");
+            loggedinView.style.display = "none";
+            loginView.style.display = "block";
+            loginBtn.disabled = false;
+            qrContainer.innerHTML = "";
+            setStatus("");
+        });
+
+        // ── Helpers ───────────────────────────────────────────────────────────────
+        function renderQR(text) {
+            qrContainer.innerHTML = ""; // clear any previous QR
+            if (isMobile()) {
+                // Show button to open Verus app directly on mobile
+                const btn = document.createElement("button");
+                btn.id = "deeplink-btn";
+                btn.textContent = "Open Verus App";
+                btn.onclick = () => {
+                    window.location.href = text;
+                };
+                qrContainer.appendChild(btn);
+            } else {
+                // Show QR code on desktop
+                const size = Math.min(320, Math.max(240, Math.floor(window.innerWidth * 0.7)));
+                new QRCode(qrContainer, {
+                    text,
+                    width: size,
+                    height: size,
+                    correctLevel: QRCode.CorrectLevel.H,
+                });
+            }
+        }
+
+        function awaitLogin(challengeID) {
+            if (socket) socket.close();
+
+            socket = new WebSocket(`${VERUS_SERVER_WS}/awaitlogin/${challengeID}`);
+
+            socket.addEventListener("open", () => {
+                console.log("WebSocket connection established");
+            });
+
+            socket.addEventListener("message", (event) => {
+                const msg = JSON.parse(event.data);
+                console.log("Received:", msg);
+
+                // Persist session
+                localStorage.setItem("token", JSON.stringify(msg.JWT));
+                localStorage.setItem("iaddress", msg.iaddress);
+                localStorage.setItem("name", msg.name);
+
+                socket.close();
+                showLoggedIn(msg.name);
+            });
+
+            socket.addEventListener("error", (err) => {
+                console.error("WebSocket error:", err);
+                setStatus("Connection error. Please try again.", true);
+                loginBtn.disabled = false;
+            });
+        }
+
+        function showLoggedIn(name) {
+            displayName.textContent = name;
+            loginView.style.display = "none";
+            loggedinView.style.display = "block";
+        }
+
+        function setStatus(msg, isError = false) {
+            statusEl.textContent = msg;
+            statusEl.className = isError ? "error" : "";
+        }
+    </script>
+</body>
+
+</html>
