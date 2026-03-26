@@ -18,6 +18,7 @@ To make a valid login with mobile phone the Verus Login Server needs to be deplo
 In config.js set the values to where the Verus Login Server is hosted.
 
 VERUS_LOGIN_SERVER_API=http://192.168.1.1:8000
+
 VERUS_LOGIN_SERVER_WS=ws://192.168.1.1:8000
 
 ## How to run
