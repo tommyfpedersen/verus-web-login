@@ -92,7 +92,7 @@
     </div>
 
     <script type="module">
-        import { VERUS_SERVER_API, VERUS_SERVER_WS } from "./config.js";
+        import { VERUS_LOGIN_SERVER_API, VERUS_LOGIN_SERVER_WS } from "./config.js";
 
         // ── DOM references ────────────────────────────────────────────────────────
         const loginView = document.getElementById("login-view");
@@ -125,7 +125,7 @@
             setStatus("Requesting login QR…");
 
             try {
-                const response = await fetch(`${VERUS_SERVER_API}/login`, { method: "POST" });
+                const response = await fetch(`${VERUS_LOGIN_SERVER_API}/login`, { method: "POST" });
 
                 if (!response.ok) {
                     throw new Error(`Server error: ${response.status}`);
@@ -189,7 +189,7 @@
         function awaitLogin(challengeID) {
             if (socket) socket.close();
 
-            socket = new WebSocket(`${VERUS_SERVER_WS}/awaitlogin/${challengeID}`);
+            socket = new WebSocket(`${VERUS_LOGIN_SERVER_WS}/awaitlogin/${challengeID}`);
 
             socket.addEventListener("open", () => {
                 console.log("WebSocket connection established");
